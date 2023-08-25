@@ -1,0 +1,126 @@
+"""
+--------------------------------------------------------------------------
+ZeroPass Team, 2023
+--------------------------------------------------------------------------
+Description:
+    This script retrieves the balance of an address within a specified date range.
+    Note: A valid dfuse API key is required to use this script.
+
+--------------------------------------------------------------------------
+Manual:
+    1. Fill in your API_KEY: Replace 'YOUR_API_KEY_HERE' with your actual API key.
+    2. Fill in the ACCOUNT: Replace 'YOUR_ACCOUNT_ADDRESS_HERE' with the address of the account you're inquiring.
+    3. Fill in the START_DATE: Replace '2020-01-01' with the start date of the range in format 'YYYY-MM-DD'.
+    4. Fill in the END_DATE: Replace '2020-01-01' with the end date of the range in format 'YYYY-MM-DD'.
+
+--------------------------------------------------------------------------
+"""
+
+import requests, http, json
+from datetime import datetime, timedelta
+
+DFUSE_ENDPOINT = 'https://eos.dfuse.eosnation.io/'
+DFUSE_AUTH_ENDPOINT = 'https://auth.dfuse.io/'
+
+
+def create_token(api_key):
+    """Create a token using the given API key."""
+    connection = http.client.HTTPSConnection(DFUSE_AUTH_ENDPOINT)
+    connection.request('POST',
+                       '/v1/auth/issue',
+                       json.dumps({"api_key": api_key}),
+                       {'Content-type': 'application/json'})
+    response = connection.getresponse()
+
+    if response.status != 200:
+        raise Exception(f" Status: {response.status} reason: {response.reason}")
+
+    decodedResponse: str = response.read().decode()
+    dfuseToken = json.loads(decodedResponse)['token']
+    return dfuseToken
+
+def get_block_id_for_date(date, token):
+    path = '/v0/block_id/by_time'
+
+    parameters = dict({
+        'time': date,
+        'comparator': 'gte'
+    })
+
+    result = requests.get(
+        DFUSE_ENDPOINT + path,
+        params=parameters,
+        headers={'Authorization': 'Bearer ' + token},
+        verify=False)
+
+    j = json.loads(result.text)
+    if result.status_code == 200:
+        return j.get('block').get('num')
+    else:
+        print("Status code: " + str(result.status_code) + " Error: " + j.get("message") + " " +
+                  json.dumps(j.get("details")))
+        raise Exception("Error getting block id for date: " + date)
+
+def get_balance_for_day(account, height, token):
+    path = '/v0/state/table'
+
+    parameters = dict({
+        'account': "eosio.token",
+        "table": "accounts",
+        "scope": account,
+        "block_num": height,
+        "json": "true"
+    })
+
+    result = requests.get(
+        DFUSE_ENDPOINT + path,
+        params=parameters,
+        headers={'Authorization': 'Bearer ' + token},
+        verify=False)
+
+    j = json.loads(result.text)
+    if result.status_code == 200:
+        balance = j.get('rows')[0].get('json').get('balance')
+        return balance
+    else:
+        print("Status code: " + str(result.status_code) + " Error: " + j.get("message") + " " +
+                  json.dumps(j.get("details")))
+        return None
+
+
+def get_balance_range(account, start_date, end_date, token):
+    current_date = start_date
+    balance = 0  # Starting balance; you'd probably want to fetch this
+
+    list = []
+    while current_date <= end_date:
+        current_date_with_time = datetime(current_date.year, current_date.month, current_date.day, 23, 59, 59)
+        block_height = get_block_id_for_date(current_date_with_time, token)
+
+        balance = get_balance_for_day(account,
+                                             block_height,
+                                             token)
+        rowDate = str(datetime.strftime(current_date_with_time, '%Y-%m-%d %H:%M:%S')) + ","
+        rowBlockHeight = str(block_height) + ","
+        rowBalance = str(balance)
+        print(rowDate + rowBlockHeight + rowBalance)
+        list.append(rowDate + rowBlockHeight + rowBalance)
+
+        current_date += timedelta(days=1)
+    return list
+
+def print_balances(balances):
+    print ("Date,Block,Balance")
+    for balance in balances:
+        print(balance)
+
+
+if __name__ == '__main__':
+    API_KEY = "YOUR_API_KEY_HERE"
+    ACCOUNT = "YOUR_ACCOUNT_ADDRESS_HERE"
+    START_DATE = datetime(2020, 1, 1)
+    END_DATE = datetime(2020, 1, 1)
+
+    token = create_token(API_KEY)
+    list = get_balance_range(ACCOUNT, START_DATE, END_DATE, token)
+    print_balances(list)
